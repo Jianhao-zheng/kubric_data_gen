@@ -10,7 +10,7 @@
 # Stage 1
 # #################################################################################################
 
-FROM ubuntu:20.04 as build
+FROM nvidia/cuda:11.4.3-devel-ubuntu20.04 as build
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LC_ALL C.UTF-8
@@ -58,6 +58,10 @@ RUN cd blender && \
 # see https://github.com/google-research/kubric/issues/65
 COPY ./docker/cycles_free_patch.txt /blenderpy/blender
 RUN cd blender && patch -p1 < /blenderpy/blender/cycles_free_patch.txt
+# enable cuda support in blenderpy compilation options
+# see https://github.com/google-research/kubric/issues/224
+COPY ./docker/enable_cuda_patch.txt /blenderpy/blender
+RUN cd blender && patch -N -p1 < /blenderpy/blender/enable_cuda_patch.txt
 
 
 RUN cd blender && make -j8 bpy
@@ -67,7 +71,7 @@ RUN cd blender && make -j8 bpy
 # #################################################################################################
 
 
-FROM ubuntu:20.04
+FROM nvidia/cuda:11.4.3-devel-ubuntu20.04
 
 LABEL Author="kubric-team <kubric@google.com>"
 LABEL Title="Blender"
