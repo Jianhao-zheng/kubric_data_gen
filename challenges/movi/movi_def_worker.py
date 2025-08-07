@@ -24,7 +24,8 @@ from kubric.simulator import PyBullet
 from kubric.renderer import Blender
 import numpy as np
 
-
+import os
+os.environ["KUBRIC_USE_GPU"] = "1"
 # --- Some configuration values
 # the region in which to place objects [(min), (max)]
 STATIC_SPAWN_REGION = [(-7, -7, 0), (7, 7, 10)]
@@ -64,8 +65,8 @@ parser.add_argument("--hdri_assets", type=str,
 parser.add_argument("--gso_assets", type=str,
                     default="gs://kubric-public/assets/GSO/GSO.json")
 parser.add_argument("--save_state", dest="save_state", action="store_true")
-parser.set_defaults(save_state=False, frame_end=24, frame_rate=12,
-                    resolution=256)
+parser.set_defaults(save_state=False, frame_end=36, frame_rate=12,
+                    resolution=512)
 FLAGS = parser.parse_args()
 
 # --- Common setups & resources
@@ -248,35 +249,35 @@ dome.restitution = FLAGS.floor_restitution
 
 
 
-# Add DYNAMIC objects
-num_dynamic_objects = rng.randint(FLAGS.min_num_dynamic_objects,
-                                  FLAGS.max_num_dynamic_objects+1)
-logging.info("Randomly placing %d dynamic objects:", num_dynamic_objects)
-for i in range(num_dynamic_objects):
-  obj = gso.create(asset_id=rng.choice(active_split))
-  assert isinstance(obj, kb.FileBasedObject)
-  scale = rng.uniform(0.75, 3.0)
-  obj.scale = scale / np.max(obj.bounds[1] - obj.bounds[0])
-  obj.metadata["scale"] = scale
-  scene += obj
-  kb.move_until_no_overlap(obj, simulator, spawn_region=DYNAMIC_SPAWN_REGION,
-                           rng=rng)
-  obj.velocity = (rng.uniform(*VELOCITY_RANGE) -
-                  [obj.position[0], obj.position[1], 0])
-  obj.metadata["is_dynamic"] = True
-  logging.info("    Added %s at %s", obj.asset_id, obj.position)
+# # Add DYNAMIC objects
+# num_dynamic_objects = rng.randint(FLAGS.min_num_dynamic_objects,
+#                                   FLAGS.max_num_dynamic_objects+1)
+# logging.info("Randomly placing %d dynamic objects:", num_dynamic_objects)
+# for i in range(num_dynamic_objects):
+#   obj = gso.create(asset_id=rng.choice(active_split))
+#   assert isinstance(obj, kb.FileBasedObject)
+#   scale = rng.uniform(0.75, 3.0)
+#   obj.scale = scale / np.max(obj.bounds[1] - obj.bounds[0])
+#   obj.metadata["scale"] = scale
+#   scene += obj
+#   kb.move_until_no_overlap(obj, simulator, spawn_region=DYNAMIC_SPAWN_REGION,
+#                            rng=rng)
+#   obj.velocity = (rng.uniform(*VELOCITY_RANGE) -
+#                   [obj.position[0], obj.position[1], 0])
+#   obj.metadata["is_dynamic"] = True
+#   logging.info("    Added %s at %s", obj.asset_id, obj.position)
 
 
 
-if FLAGS.save_state:
-  logging.info("Saving the simulator state to '%s' prior to the simulation.",
-               output_dir / "scene.bullet")
-  simulator.save_state(output_dir / "scene.bullet")
+# if FLAGS.save_state:
+#   logging.info("Saving the simulator state to '%s' prior to the simulation.",
+#                output_dir / "scene.bullet")
+#   simulator.save_state(output_dir / "scene.bullet")
 
-# Run dynamic objects simulation
-logging.info("Running the simulation ...")
-animation, collisions = simulator.run(frame_start=0,
-                                      frame_end=scene.frame_end+1)
+# # Run dynamic objects simulation
+# logging.info("Running the simulation ...")
+# animation, collisions = simulator.run(frame_start=0,
+#                                       frame_end=scene.frame_end+1)
 
 # --- Rendering
 if FLAGS.save_state:
