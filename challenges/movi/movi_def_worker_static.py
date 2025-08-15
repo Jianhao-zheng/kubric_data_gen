@@ -85,6 +85,10 @@ parser.add_argument("--camera", choices=["pure_rotation_single_axis",
                                          "fixed_random", 
                                          "linear_movement", 
                                          "linear_movement_linear_lookat",
+                                         "target_locked_lateral",
+                                         'target_locked_vertical',
+                                         'target_locked_orbit',
+                                         'target_locked_spiral',
                                          "ego"],
                     default="fixed_random")
 parser.add_argument("--max_camera_movement", type=float, default=8.0)
@@ -210,6 +214,11 @@ def get_linear_lookat_motion_start_end(
 logging.info("Setting up the Camera...")
 camera_meta_data = {'motion_blur': motion_blur,'motion_type':FLAGS.camera,}
 scene.camera = kb.PerspectiveCamera(focal_length=35., sensor_width=32)
+
+# Choose motion mode
+mode = rng.choice(['smooth','jitter'], p=[0.75, 0.25])
+camera_meta_data['mode'] = mode
+
 if FLAGS.camera == "fixed_random":
   scene.camera.position = kb.sample_point_in_half_sphere_shell(
       inner_radius=7., outer_radius=9., offset=0.1)
@@ -218,8 +227,6 @@ elif (
     FLAGS.camera == "linear_movement"
     or FLAGS.camera == "linear_movement_linear_lookat"
 ):
-  # Choose motion mode
-  mode = rng.choice(['smooth','jitter'], p=[0.75, 0.25])
 
   is_panning = FLAGS.camera == "linear_movement_linear_lookat"
   camera_inner_radius = 6.0 if is_panning else 8.0
@@ -237,7 +244,7 @@ elif (
   # while keeping it focused on the center of the scene
   # we start one frame early and end one frame late to ensure that
   # forward and backward flow are still consistent for the last and first frames
-  per_step_motion = (np.array(camera_end) - np.array(camera_start)) / (FLAGS.frame_end - FLAGS.frame_start + 2)
+  per_step_motion = np.linalg.norm(np.array(camera_end) - np.array(camera_start)) / (FLAGS.frame_end - FLAGS.frame_start + 3)
   for frame in range(FLAGS.frame_start - 1, FLAGS.frame_end + 2):
     interp = ((frame - FLAGS.frame_start + 1) /
               (FLAGS.frame_end - FLAGS.frame_start + 3))
@@ -257,10 +264,7 @@ elif (
       scene.camera.position = add_random_jitter_pos(scene.camera.position, max_jitter=min(0.1,per_step_motion* 0.5))
     scene.camera.keyframe_insert("position", frame)
     scene.camera.keyframe_insert("quaternion", frame)
-  camera_meta_data['mode'] = mode
 elif FLAGS.camera == "pure_rotation_single_axis":
-  # Choose motion mode
-  mode = rng.choice(['smooth','jitter'], p=[0.75, 0.25])
   # Choose axis
   axis = rng.choice(['pitch','yaw','roll'])
   # axis = rng.choice(['pitch','yaw'])
@@ -316,11 +320,8 @@ elif FLAGS.camera == "pure_rotation_single_axis":
 
   camera_meta_data['axis'] = axis
   camera_meta_data['deg_total'] = deg_total
-  camera_meta_data['mode'] = mode
   camera_meta_data['sign'] = sign
 elif FLAGS.camera == "pure_rotation_complex":
-  # Choose motion mode
-  mode = rng.choice(['smooth','jitter'], p=[0.75, 0.25])
   # Whether to force rotation on roll
   force_roll = rng.choice([True,False], p=[0.25, 0.75])
 
@@ -373,22 +374,26 @@ elif FLAGS.camera == "pure_rotation_complex":
     frame_start = frame_end
 
   # camera_meta_data['num_lookats'] = num_lookats # Useless, we always have 2 lookats
-  camera_meta_data['mode'] = mode
   camera_meta_data['force_roll'] = str(force_roll) # Boolean is not json serializable
 elif FLAGS.camera == "ego":
-  camera_start, camera_end = get_linear_camera_motion_start_end(
-      movement_speed=rng.uniform(low=0., high=FLAGS.max_camera_movement)
+  camera_look_at = np.array(
+      kb.sample_point_in_half_sphere_shell(0.0, 2.0, 0.0)
   )
-  # # First, get a fixed lookat point
-  # lookat_point = np.array((0, 0, 0))
-  
-  # # Sample a starting camera position
-  # camera_start = kb.sample_point_in_half_sphere_shell(
-  #     inner_radius=10., outer_radius=15., offset=0.1)
-  
-  # Calculate the optical axis direction (from camera to lookat point)
-  optical_axis = camera_end - camera_start
-  optical_axis = optical_axis / np.linalg.norm(optical_axis)
+  while True:
+    p0 = np.array(
+        kb.sample_point_in_half_sphere_shell(
+            inner_radius=15.0, outer_radius=45.0, offset=0.1
+        )
+    )
+
+    if p0[2] < 20:
+    # ensure the camera is not too high: elevation < 45deg
+      break
+
+  camera_start = p0
+  camera_end = camera_look_at * 0.3 + camera_start * 0.7
+  camera_end[2] = camera_start[2]  # keep the same height as the start position
+
   
   # # Calculate the end position by moving along the optical axis
   # direction = 1 if rng.random() < 0.5 else -1
@@ -404,6 +409,215 @@ elif FLAGS.camera == "ego":
     
     # Always look at the fixed lookat point
     scene.camera.look_at(camera_end)
+
+    scene.camera.keyframe_insert("position", frame)
+    scene.camera.keyframe_insert("quaternion", frame)
+elif FLAGS.camera == "target_locked_lateral":
+  # 1) Choose a fixed look-at point (anchor) and an initial camera position
+  camera_look_at = np.array(
+      kb.sample_point_in_half_sphere_shell(0.0, 2.0, 0.0)
+  )
+  while True:
+    p0 = np.array(
+        kb.sample_point_in_half_sphere_shell(
+            inner_radius=7.0, outer_radius=15.0, offset=0.1
+        )
+    )
+
+    if p0[2] < 0.7071067811865475 * np.linalg.norm(p0):
+    # ensure the camera is not too high: elevation < 45deg
+      break
+  
+  # 2) Build a lateral direction (right vector) perpendicular to forward and up
+  up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+  v = camera_look_at - p0
+  v_no_z = v.copy()
+  v_no_z[2] = 0.0  # ignore z component
+  v_no_z = v_no_z / np.linalg.norm(v_no_z)  # forward (toward target)
+
+  right = np.cross(v_no_z, up)
+  right = right / np.linalg.norm(right)
+
+  # 3) Decide how far to move: 50–150% of depth-to-target, random side
+  d = np.linalg.norm(v)
+  total_lateral = float(rng.uniform(0.5, 1.5) * d)
+  print(total_lateral)
+  if rng.random() < 0.5:
+      right = -right  # randomize trucking direction
+
+  per_step_motion = abs(total_lateral / (FLAGS.frame_end - FLAGS.frame_start + 3))
+  for frame in range(FLAGS.frame_start - 1, FLAGS.frame_end + 2):
+    interp = ((frame - FLAGS.frame_start + 1) /
+              (FLAGS.frame_end - FLAGS.frame_start + 3))
+    current_position = interp * total_lateral * right + p0
+    scene.camera.position = current_position
+    
+    # Always look at the fixed lookat point
+    scene.camera.look_at(camera_look_at)
+
+    if mode == 'jitter':
+      scene.camera.quaternion = add_random_jitter_rot(scene.camera.quaternion, max_jitter=0.5)
+      scene.camera.position = add_random_jitter_pos(scene.camera.position, max_jitter=min(0.1,per_step_motion* 0.5))
+
+    scene.camera.keyframe_insert("position", frame)
+    scene.camera.keyframe_insert("quaternion", frame)
+elif FLAGS.camera == "target_locked_vertical":
+  # 1) Fixed look-at and initial position
+  camera_look_at = np.array(
+      kb.sample_point_in_half_sphere_shell(0.0, 2.0, 0.0)
+  )
+  while True:
+    p0 = np.array(
+        kb.sample_point_in_half_sphere_shell(
+            inner_radius=7.0, outer_radius=15.0, offset=0.1
+        )
+    )
+
+    if p0[2] < 0.7071067811865475 * np.linalg.norm(p0):
+    # ensure the camera is not too high: elevation < 45deg
+      break
+
+  # 2) Vertical (up) direction and travel amount
+  up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+  d = np.linalg.norm(camera_look_at - p0)
+  if rng.random() < 0.5:
+    total_up = -float(rng.uniform(0.3, 0.8) * p0[1])
+
+  else:
+    total_up = float(rng.uniform(0.2, 0.7) * d)
+
+  # 3) Animate
+  per_step_motion = abs(total_up / (FLAGS.frame_end - FLAGS.frame_start + 3))
+  for frame in range(FLAGS.frame_start - 1, FLAGS.frame_end + 2):
+    interp = ((frame - FLAGS.frame_start + 1) /
+              (FLAGS.frame_end - FLAGS.frame_start + 3))
+    current_position = p0 + interp * total_up * up
+    scene.camera.position = current_position
+    scene.camera.look_at(camera_look_at)
+
+    if mode == 'jitter':
+      scene.camera.quaternion = add_random_jitter_rot(scene.camera.quaternion, max_jitter=0.5)
+      scene.camera.position = add_random_jitter_pos(scene.camera.position, max_jitter=min(0.1,per_step_motion* 0.5))
+
+    scene.camera.keyframe_insert("position", frame)
+    scene.camera.keyframe_insert("quaternion", frame)
+elif FLAGS.camera == "target_locked_orbit":
+  # 1) Fixed look-at and initial position
+  camera_look_at = np.array(
+      kb.sample_point_in_half_sphere_shell(0.0, 2.0, 0.0)
+  )
+  while True:
+    p0 = np.array(
+        kb.sample_point_in_half_sphere_shell(
+            inner_radius=7.0, outer_radius=15.0, offset=0.1
+        )
+    )
+
+    if p0[2] < 0.7071067811865475 * np.linalg.norm(p0):
+    # ensure the camera is not too high: elevation < 45deg
+      break
+
+  # 2) Vertical (up) direction and travel amount
+  up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+
+  # 2) Decompose p0 - c into height + radial components
+  r0_vec = p0 - camera_look_at
+  H = float(np.dot(r0_vec, up))
+  radial = r0_vec - H * up
+  r0 = float(np.linalg.norm(radial))
+
+  e1 = radial / r0
+  e2 = np.cross(up, e1)
+  e2 = e2 / np.linalg.norm(e2)
+
+  # 3) Angular sweep (radians) and small height drift
+  dtheta = float(rng.uniform(np.deg2rad(90.0), np.deg2rad(360.0)))
+  if rng.random() < 0.5:
+    dtheta = -dtheta
+  h_total = float(rng.uniform(-0.3, 0.3))* H  # height drift, in proportion to the initial height
+  # 4) Animate (interp in [0,1])
+  steps = FLAGS.frame_end - FLAGS.frame_start + 3
+  dtheta_step = abs(dtheta) / steps                 # rad/frame
+  dh_step     = abs(h_total) / steps                # world-units/frame  (along +Z)
+  per_step_motion = np.hypot(r0 * dtheta_step, dh_step)
+  for frame in range(FLAGS.frame_start - 1, FLAGS.frame_end + 2):
+    interp = ((frame - FLAGS.frame_start + 1) /
+              (FLAGS.frame_end - FLAGS.frame_start + 3))
+    theta = interp * dtheta
+    current_position = (camera_look_at
+                        + r0 * (np.cos(theta) * e1 + np.sin(theta) * e2)
+                        + (H + interp * h_total) * up)
+    scene.camera.position = current_position
+    scene.camera.look_at(camera_look_at)
+
+    if mode == 'jitter':
+      scene.camera.quaternion = add_random_jitter_rot(scene.camera.quaternion, max_jitter=0.5)
+      scene.camera.position = add_random_jitter_pos(scene.camera.position, max_jitter=min(0.1,per_step_motion* 0.5))
+
+    scene.camera.keyframe_insert("position", frame)
+    scene.camera.keyframe_insert("quaternion", frame)
+elif FLAGS.camera == "target_locked_spiral":
+  # 1) Fixed look-at and initial position
+  camera_look_at = np.array(
+      kb.sample_point_in_half_sphere_shell(0.0, 2.0, 0.0)
+  )
+  while True:
+    p0 = np.array(
+        kb.sample_point_in_half_sphere_shell(
+            inner_radius=7.0, outer_radius=15.0, offset=0.1
+        )
+    )
+
+    if p0[2] < 0.7071067811865475 * np.linalg.norm(p0):
+    # ensure the camera is not too high: elevation < 45deg
+      break
+
+  # 2) Vertical (up) direction and travel amount
+  up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+
+  # 2) Decompose p0 - c into height + radial components
+  r0_vec = p0 - camera_look_at
+  H = float(np.dot(r0_vec, up))
+  radial = r0_vec - H * up
+  r0 = float(np.linalg.norm(radial))
+
+  e1 = radial / r0
+  e2 = np.cross(up, e1)
+  e2 = e2 / np.linalg.norm(e2)
+
+  # 3) Angular sweep (radians) and small height drift
+  d = float(np.linalg.norm(r0_vec))  # distance to target
+  dtheta = float(rng.uniform(np.deg2rad(90.0), np.deg2rad(360.0)))
+  if rng.random() < 0.5:
+    dtheta = -dtheta
+
+  # With elevation < 45°, r0/d ≳ 0.707, so allow moderate in/out:
+  r_min = 0.50 * d         # ~ down to ~70% of r0 at worst
+  r_max = 0.95 * d         # avoid flattening the orbit to the plane
+  r1_try = float(r0 * rng.uniform(0.70, 1.15))  # -30% .. +15% vs r0
+  r1 = float(np.clip(r1_try, r_min, r_max))
+  dr = r1 - r0
+
+  h_total = float(rng.uniform(-0.3, 0.3))* H  # height drift, in proportion to the initial height
+  # 4) Animate (interp in [0,1])
+  steps = FLAGS.frame_end - FLAGS.frame_start + 3
+  dtheta_step = abs(dtheta) / steps                 # rad/frame
+  dh_step     = abs(h_total) / steps                # world-units/frame  (along +Z)
+  per_step_motion = np.hypot(r0 * dtheta_step, dh_step)  # This is not exactly correct, but good enough for constraining jitter
+  for frame in range(FLAGS.frame_start - 1, FLAGS.frame_end + 2):
+    interp = ((frame - FLAGS.frame_start + 1) /
+              (FLAGS.frame_end - FLAGS.frame_start + 3))
+    theta = interp * dtheta
+    r_t = r0 + interp * dr
+    current_position = (camera_look_at
+                        + r_t * (np.cos(theta) * e1 + np.sin(theta) * e2)
+                        + (H + interp * h_total) * up)
+    scene.camera.position = current_position
+    scene.camera.look_at(camera_look_at)
+
+    if mode == 'jitter':
+      scene.camera.quaternion = add_random_jitter_rot(scene.camera.quaternion, max_jitter=0.5)
+      scene.camera.position = add_random_jitter_pos(scene.camera.position, max_jitter=min(0.1,per_step_motion* 0.5))
 
     scene.camera.keyframe_insert("position", frame)
     scene.camera.keyframe_insert("quaternion", frame)
