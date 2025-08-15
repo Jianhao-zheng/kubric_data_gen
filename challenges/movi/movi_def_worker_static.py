@@ -217,7 +217,6 @@ scene.camera = kb.PerspectiveCamera(focal_length=35., sensor_width=32)
 
 # Choose motion mode
 mode = rng.choice(['smooth','jitter'], p=[0.75, 0.25])
-mode = 'jitter'
 camera_meta_data['mode'] = mode
 
 if FLAGS.camera == "fixed_random":
