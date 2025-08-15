@@ -217,6 +217,7 @@ scene.camera = kb.PerspectiveCamera(focal_length=35., sensor_width=32)
 
 # Choose motion mode
 mode = rng.choice(['smooth','jitter'], p=[0.75, 0.25])
+mode = 'jitter'
 camera_meta_data['mode'] = mode
 
 if FLAGS.camera == "fixed_random":
@@ -244,7 +245,7 @@ elif (
   # while keeping it focused on the center of the scene
   # we start one frame early and end one frame late to ensure that
   # forward and backward flow are still consistent for the last and first frames
-  per_step_motion = np.linalg.norm(np.array(camera_end) - np.array(camera_start)) / (FLAGS.frame_end - FLAGS.frame_start + 3)
+  per_step_motion = float(np.linalg.norm(np.array(camera_end) - np.array(camera_start)) / (FLAGS.frame_end - FLAGS.frame_start + 3))
   for frame in range(FLAGS.frame_start - 1, FLAGS.frame_end + 2):
     interp = ((frame - FLAGS.frame_start + 1) /
               (FLAGS.frame_end - FLAGS.frame_start + 3))
